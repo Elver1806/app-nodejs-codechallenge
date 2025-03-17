@@ -1,12 +1,18 @@
-version: "3.7"
+version: '3.7'
 services:
+  #Databases
   postgres:
     image: postgres:14
     ports:
-      - "5432:5432"
+      - '5432:5432'
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
+  redis:
+    image: 'redis:7.2.4'
+    ports:
+      - '6379:6379'
+  #Kafka Services
   zookeeper:
     image: confluentinc/cp-zookeeper:5.5.3
     environment:
@@ -15,11 +21,72 @@ services:
     image: confluentinc/cp-enterprise-kafka:5.5.3
     depends_on: [zookeeper]
     environment:
-      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://host.docker.internal:9092
+      # KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_BROKER_ID: 1
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_JMX_PORT: 9991
     ports:
       - 9092:9092
+  control-center:
+    image: confluentinc/cp-enterprise-control-center:5.5.3
+    hostname: control-center
+    container_name: control-center
+    depends_on:
+      - kafka
+      - zookeeper
+    ports:
+      - '9021:9021'
+    environment:
+      CONTROL_CENTER_BOOTSTRAP_SERVERS: 'kafka:29092'
+      CONTROL_CENTER_KSQL_KSQLDB1_URL: 'http://ksqldb-server:8088'
+      CONTROL_CENTER_KSQL_KSQLDB1_ADVERTISED_URL: 'http://host.docker.internal:8088'
+      CONTROL_CENTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+      CONTROL_CENTER_REPLICATION_FACTOR: 1
+      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1
+      CONFLUENT_METRICS_TOPIC_REPLICATION: 1
+      PORT: 9021
+  #MicroServices
+  anti-fraud-service:
+    build: ./anti_fraud_service
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+      - zookeeper
+    ports:
+      - '3001:3001'
+    environment:
+      ANTI_FRAUD_PORT: 3001
+      API_TRANSACTIONS: 'http://host.docker.internal:3000/graphql'
+      KAFKA_BROKER: 'host.docker.internal:9092'
+      KAFKA_CLIENT_ID: 'ANTI_FRAUD_CLIENT'
+      KAFKA_TOPIC: 'ANTI_FRAU_TOPIC'
+      KAFKA_GROUP_ID_ANTI_FRAUD: 'ANTI_FRAUD_VALIDATE'
+      KAFKA_TRANSACTION_TOPIC: 'TRANSACTION_TOPIC'
+      KAFKA_TRANSACTION_CLIENT_ID: 'TRANSACTION_CLIENT'
+      KAFKA_GROUP_ID_TRANSACTION: 'TRANSACTION_UPDATE'
+  transaction-service:
+    build: ./transaction_rest
+    depends_on:
+      - anti-fraud-service
+    ports:
+      - '3000:3000'
+    environment:
+      REDIS_URL: 'redis://host.docker.internal:6379'
+      PG_HOST: 'host.docker.internal'
+      PG_PORT: 5432
+      PG_USERNAME: 'postgres'
+      PG_PASSWORD: 'postgres'
+      PG_DATABASE: 'postgres'
+      TRANSACTION_PORT: 3000
+      API_TRANSACTIONS: 'http://host.docker.internal:3000/graphql'
+      KAFKA_BROKER: 'host.docker.internal:9092'
+      KAFKA_CLIENT_ID: 'ANTI_FRAUD_CLIENT'
+      KAFKA_TOPIC: 'ANTI_FRAU_TOPIC'
+      KAFKA_TRANSACTION_TOPIC: 'TRANSACTION_TOPIC'
+      KAFKA_TRANSACTION_CLIENT_ID: 'TRANSACTION_CLIENT'
+      KAFKA_GROUP_ID_TRANSACTION: 'TRANSACTION_UPDATE'
